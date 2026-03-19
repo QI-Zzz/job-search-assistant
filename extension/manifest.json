@@ -1,0 +1,19 @@
+{
+  "name": "LinkedIn Filter Extension",
+  "description": "Two-stage job filtering: hide irrelevant cards instantly, deep-filter on detail pane, save matches to your database.",
+  "version": "1.0.0",
+  "manifest_version": 3,
+  "action": {
+    "default_popup": "hello.html"
+  },
+
+  
+  "background": {
+    "service_worker": "src/background.js"
+  },
+
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ]
+} 
