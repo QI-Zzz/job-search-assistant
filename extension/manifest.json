@@ -3,17 +3,29 @@
   "description": "Two-stage job filtering: hide irrelevant cards instantly, deep-filter on detail pane, save matches to your database.",
   "version": "1.0.0",
   "manifest_version": 3,
-  "action": {
-    "default_popup": "hello.html"
-  },
-
   
   "background": {
     "service_worker": "src/background.js"
   },
 
+  "content_scripts": [
+    {
+      "matches": ["https://www.linkedin.com/jobs/search/*"],
+      "js": ["src/content/main.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
   "permissions": [
-    "activeTab",
-    "scripting"
-  ]
+    "storage"
+  ],
+
+  "host_permissions": [
+    "https://www.linkedin.com/jobs/search/*",
+    "http://localhost:8000/*"
+  ],
+
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
 } 
