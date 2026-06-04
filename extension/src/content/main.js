@@ -1,87 +1,72 @@
-// Wait the page to be ready, then init it
-function init() {
+let lastProcessedJobID = null
 
-    const jobListContainer = document.querySelector('.scaffold-layout__list')
-    
-    if (!jobListContainer) {
+function getJobIDFromURL() {
+    const match = window.location.href.match(/currentJobId=(\d+)/)
+    return match ? match[1] : null
+}
+
+function extractJobData(pane, jobID) {
+    return {
+        jobID,
+        title: pane.querySelector('h1')?.textContent.trim() || null,
+        company: pane.querySelector(
+            '.job-details-jobs-unified-top-card__company-name'
+        )?.textContent.trim() || null,
+        location: pane.querySelector(
+            '.job-details-jobs-unified-top-card__primary-description-container'
+        )?.textContent.trim() || null,
+        description: pane.querySelector('.mt4')?.textContent.trim() || null,
+        linkedin_url: window.location.href,
+        source: 'linkedin',
+        collected_at: new Date().toISOString()
+    }
+}
+
+async function processDetailPane(pane) {
+    const jobID = getJobIDFromURL()
+    if (!jobID) return
+    if (jobID === lastProcessedJobID) return
+
+    const h1 = pane.querySelector('h1')
+    if (!h1) return
+
+    lastProcessedJobID = jobID
+
+    // Check if already saved
+    const seen = await JobStorage.hasBeenSeen(jobID)
+    if (seen) {
+        markAlreadySaved(pane)
         return
     }
-    
-    const callback = (mutations) => {
-        mutations.forEach(mutation => {
-            mutation.addedNodes.forEach(node => {
-                if (node.nodeType !== Node.ELEMENT_NODE) return
-                if (!node.matches('.job-card-container')) return
-                processJobCard(node)
-                
-            })
-        })
-    }
-    const observer = new MutationObserver(callback)
 
-    observer.observe(jobListContainer, { childList: true, subtree: true })
+    // Extract and inject save button
+    const jobData = extractJobData(pane, jobID)
 
+    injectSaveButton(pane, jobData, async () => {
+        // Save to local storage
+        await JobStorage.setJobState(jobID, 'saved', null, null)
 
-}
-
-// Process a single job card
-async function processJobCard(card) {
-    const jdInfo = card.querySelector('.job-card-container__link')
-    if (!jdInfo) return
-    
-    const jobID = card.getAttribute('data-job-id') || null
-    if (!jobID) return
-
-    const seen = await JobStorage.hasBeenSeen(jobID)
-    if (seen) return
-
-    const footerTags = Array.from(
-        card.querySelectorAll('.job-card-container__footer-wrapper li')
-    )
-        .map(el => el.textContent.trim())
-        .filter(Boolean)
-
-    const jobData ={
-        jobID: jobID,
-        title: jdInfo.textContent.trim() || null,
-        company: card.querySelector('.artdeco-entity-lockup__subtitle span')?.textContent.trim() || null,
-        location: card.querySelector('.artdeco-entity-lockup__caption span')?.textContent.trim() || null,
-        linkedinTag: footerTags
-    }
-
-    const result =stage1Filter(jobData)
-
-    if (result === 'reject') {
-        card.style.display = 'none'
-        await JobStorage.setJobState(jobID, 'not relevant', jobData.linkedinTag)
-    } else {
-        onDetailPaneLoaded(jobData)
-    }
-}
-
-// Handle detail pane
-function onDetailPaneLoaded(jobData) {
-    const detailPane = document.querySelector('.job-search__job-details--wrapper')
-    if (!detailPane) return
-    
-    const observer = new MutationObserver(mutations => {
-        mutations.forEach(mutation => {
-            mutation.addedNodes.forEach(node => {
-                const descriptionE1 = node.matches('.jobs-details__content') 
-                    ? node 
-                    : node.querySelector('.jobs-details__content')
-                if (!descriptionE1) return
-
-                stage2Filter(jobData, descriptionE1)
-                observer.disconnect()
-            })
+        // POST to FastAPI
+        chrome.runtime.sendMessage({
+            type: 'SAVE_JOB',
+            payload: jobData
         })
     })
-
-    observer.observe(detailPane, { childList: true, subtree: true })
-
 }
 
+function init() {
+    const observer = new MutationObserver(() => {
+        const detailPane = document.querySelector(
+            '.jobs-search__job-details--wrapper'
+        )
+        if (!detailPane) return
+        processDetailPane(detailPane)
+    })
 
-// start everything
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    })
+}
+
 init()

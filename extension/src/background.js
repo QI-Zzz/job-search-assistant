@@ -1,23 +1,21 @@
-// chrome.runtime.onInstalled.addListener(() => {
-//   chrome.action.setBadgeText({
-//     text: "OFF",
-//   });
-// });
+const API_BASE = 'http://localhost:8000'
 
-// const extensions = 'https://developer.chrome.com/docs/extensions';
-// const webstore = 'https://developer.chrome.com/docs/webstore';
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
-// chrome.action.onClicked.addListener(async (tab) => {
-//   if (tab.url.startsWith(extensions) || tab.url.startsWith(webstore)) {
-//     // Retrieve the action badge to check if the extension is 'ON' or 'OFF'
-//     const prevState = await chrome.action.getBadgeText({ tabId: tab.id });
-//     // Next state will always be the opposite
-//     const nextState = prevState === 'ON' ? 'OFF' : 'ON';
+    if (message.type === 'SAVE_JOB') {
+        fetch(`${API_BASE}/jobs/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(message.payload)
+        })
+        .then(response => {
+            sendResponse({ success: true })
+        })
+        .catch(error => {
+            console.error('Failed to save job:', error)
+            sendResponse({ success: false, error: error.message })
+        })
+    }
 
-//     // Set the action badge to the next state
-//     await chrome.action.setBadgeText({
-//       tabId: tab.id,
-//       text: nextState,
-//     });
-//   }
-// });
+    return true
+})
