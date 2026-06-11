@@ -4,6 +4,9 @@ WHERE NOT EXISTS (
     SELECT FROM pg_database WHERE datname = 'jobs_db'
 )\gexec
 
+
+
+
 -- create the database for Airflow
 SELECT 'CREATE DATABASE airflow_db' 
 WHERE NOT EXISTS (
