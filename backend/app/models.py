@@ -3,7 +3,6 @@ from datetime import datetime
 
 class Job(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-
     job_id: str = Field(alias="jobID")
     title: str 
     company: str 

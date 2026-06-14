@@ -1,0 +1,12 @@
+job_search_assistant:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      threads: 1
+      host: "{{ env_var('POSTGRES_HOST') }}"
+      dbname: "{{ env_var('POSTGRES_DB') }}"
+      user: "{{ env_var('POSTGRES_USER') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD') }}"
+      port: 5432
+      schema: staging
