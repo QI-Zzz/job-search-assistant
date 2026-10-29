@@ -1,0 +1,4 @@
+# apify-client 3.x needs pydantic>=2.11, which conflicts with Airflow 2.8.1's constraints.
+# 2.x returns plain dicts (run["id"], run["defaultDatasetId"]).
+apify-client>=2,<3
+psycopg2-binary

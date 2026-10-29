@@ -1,0 +1,52 @@
+name: job_search_assistant
+version: '1.0.0'
+profile: job_search_assistant
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+
+# Free, rule-based filters applied before any LLM call (see jobs_prefiltered).
+# Patterns are case-insensitive Postgres regexes; \m and \M are word boundaries.
+vars:
+  prefilter:
+    lead_title: '\m(lead|head|manager|managing|principal|director|chief|vp|teamlead|teamleider)\M'
+    senior_title: '\m(senior|sr|staff)\M'
+    # also Dutch thesis / research internships, academic roles, and graduate programmes named by year ("SDE - 2027")
+    junior_track_title: '\m(intern|internship|stage|stagiair|werkstudent|trainee|graduate|afstudeer\w*|onderzoeksstage|phd|postdoc|20[2-3][0-9])\M'
+    freelance_title: '\m(freelance|freelancer|zzp|interim)\M'
+    pool_title: '(talent pool|candidate pool|open application|open sollicitatie)'
+    # titles asking for another language; Mandarin / Chinese are left out on purpose (Amy is a native speaker)
+    other_language_title: '\m(dutch|flemish|german|french|spanish|italian|portuguese|polish|czech|hungarian|swedish|danish|norwegian|finnish|nordic|turkish|arabic|russian|japanese|korean)[- ]speaking\M'
+    # LinkedIn's own fields; "Mid-Senior level" is not used because most jobs say "Not Applicable"
+    excluded_experience_levels: ['Director', 'Executive', 'Internship']
+    excluded_contract_types: ['Internship', 'Volunteer', 'Part-time']
+    # Amsterdam region plus Utrecht (city and province) and the Randstad; country-only or remote locations are kept
+    allowed_location: '(amsterdam|amstelveen|hoofddorp|schiphol|utrecht|randstad|^netherlands$|remote)'
+  # Rules applied to pass 1 facts (see jobs_eligibility).
+  eligibility:
+    max_years_required: 5
+  # Weights for pass 2 sub-scores and the rules for picking jobs for the email (see job_ranking).
+  ranking:
+    career_weights:
+      salary_ceiling: 0.30
+      geographic_mobility: 0.25
+      skill_transferability: 0.25
+      low_lock_in_risk: 0.20
+    fit_weights:
+      skills_match: 0.35
+      experience_level: 0.25
+      role_domain_match: 0.25
+      other_must_haves: 0.15
+    max_tier: 3
+    min_fit_score: 5
+    max_jobs_per_email: 15
+
+models:
+  job_search_assistant:
+    staging:
+      +schema: staging
+      +materialized: view
+    mart:
+      +schema: mart
+      +materialized: table

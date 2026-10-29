@@ -1,0 +1,4 @@
+# The Anthropic SDK needs a newer typing_extensions than Airflow 2.8.1 allows,
+# so pass 1 runs in its own virtualenv (see Dockerfile).
+anthropic>=2,<3
+psycopg2-binary

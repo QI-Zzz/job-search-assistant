@@ -9,3 +9,7 @@ logs/
 dbt_project/target/
 dbt_project/dbt_packages/
 .vscode/
+dbt_project/logs/
+
+# personal CV details; the repo is public
+profile/

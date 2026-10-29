@@ -1,0 +1,41 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: apify_jobs
+        description: "LinkedIn jobs as returned by the Apify actor, one row per job per run."
+        columns:
+          - name: run_id
+            description: "Apify run ID."
+          - name: search_keyword
+            description: "Keyword the run searched for."
+          - name: job_id
+            description: "LinkedIn job ID."
+          - name: payload
+            description: "Item exactly as returned by Apify."
+          - name: fetched_at
+            description: "When the run was landed."
+      - name: job_extractions
+        description: "Pass 1: facts extracted from each job by a cheap LLM, one row per job per prompt version."
+        columns:
+          - name: job_id
+            description: "LinkedIn job ID."
+          - name: prompt_version
+            description: "Version of the extraction prompt and schema."
+          - name: status
+            description: "'ok' or 'failed'."
+          - name: extraction
+            description: "Validated JSON output; NULL when the call failed."
+          - name: raw_response
+            description: "Full API response as received."
+      - name: job_scores
+        description: "Pass 2: career value and fit scores, one row per job per score type, prompt version and profile version."
+        columns:
+          - name: score_type
+            description: "'career_value' or 'fit'."
+          - name: profile_version
+            description: "Hash of the candidate profile used; '-' for career value."
+          - name: result
+            description: "Validated JSON output; NULL when the call failed."
