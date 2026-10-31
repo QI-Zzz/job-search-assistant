@@ -1,9 +1,16 @@
--- One row per eligible job with a career value score, ranked for the daily email.
--- Weights and selection rules live in dbt_project.yml (vars.ranking).
+-- One row per scored eligible job first fetched in the last few days, in the order the email lists them. Every scored job is sent
+-- (since 2026-10-31: few jobs reach pass 2, so there is no cut). Weights live in dbt_project.yml (vars.ranking).
 
 {% set r = var('ranking') %}
 
-WITH latest_scores AS (
+WITH first_fetched AS (
+    -- straight from the raw table: joining the stg_jobs view here made the model take minutes
+    SELECT job_id, MIN(fetched_at) AS first_fetched_at
+    FROM {{ source('raw', 'apify_jobs') }}
+    GROUP BY job_id
+),
+
+latest_scores AS (
     SELECT DISTINCT ON (job_id, score_type)
         job_id,
         score_type,
@@ -35,12 +42,9 @@ fit AS (
     SELECT
         job_id,
         profile_version,
-        ROUND((
-            {{ r.fit_weights.skills_match }} * (result -> 'skills_match' ->> 'score')::NUMERIC
-            + {{ r.fit_weights.experience_level }} * (result -> 'experience_level' ->> 'score')::NUMERIC
-            + {{ r.fit_weights.role_domain_match }} * (result -> 'role_domain_match' ->> 'score')::NUMERIC
-            + {{ r.fit_weights.other_must_haves }} * (result -> 'other_must_haves' ->> 'score')::NUMERIC
-        ), 1) AS fit_score,
+        -- fit v2 is one overall score; v1 had four weighted dimensions
+        (result ->> 'score')::NUMERIC AS fit_score,
+        result ->> 'reason' AS fit_reason,
         ARRAY(SELECT JSONB_ARRAY_ELEMENTS_TEXT(result -> 'match_reasons')) AS match_reasons,
         ARRAY(SELECT JSONB_ARRAY_ELEMENTS_TEXT(result -> 'gaps')) AS gaps,
         result AS fit_detail
@@ -63,17 +67,19 @@ scored AS (
         c.technical_advantage,
         c.career_summary,
         f.fit_score,
+        f.fit_reason,
         f.match_reasons,
         f.gaps,
         f.profile_version,
         ROUND((c.career_value_score + f.fit_score) / 2, 1) AS overall_score,
-        c.tier <= {{ r.max_tier }} AND f.fit_score >= {{ r.min_fit_score }} AS meets_bar,
         c.career_detail,
         f.fit_detail
     FROM {{ ref('jobs_eligibility') }} AS e
+    JOIN first_fetched AS j USING (job_id)
     JOIN career AS c USING (job_id)
     LEFT JOIN fit AS f USING (job_id)
     WHERE e.drop_reason IS NULL
+      AND j.first_fetched_at >= NOW() - INTERVAL '{{ r.recent_days }} days'
 ),
 
 ranked AS (
@@ -81,12 +87,12 @@ ranked AS (
         *,
         -- technical advantage only breaks ties
         ROW_NUMBER() OVER (
-            ORDER BY meets_bar DESC, overall_score DESC NULLS LAST, technical_advantage DESC
+            ORDER BY overall_score DESC NULLS LAST, technical_advantage DESC
         ) AS rank
     FROM scored
 )
 
 SELECT
     *,
-    meets_bar AND rank <= {{ r.max_jobs_per_email }} AS selected
+    TRUE AS selected
 FROM ranked

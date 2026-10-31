@@ -3,8 +3,7 @@
 Run by hand from airflow/dags:  python -m job_agent.fetch
 """
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from apify_client import ApifyClient
 from psycopg2.extras import Json
@@ -13,14 +12,16 @@ from job_agent import config
 from job_agent.db import get_connection
 
 
-def run_search(client, keyword):
+def run_search(client, keyword, skip_ids):
     run_input = {
         "keywords": keyword,
         "location": config.SEARCH_LOCATION,
         "datePosted": config.DATE_POSTED,
         "limit": config.LIMIT_PER_SEARCH,
+        # Apify does not return (or charge for) these jobs
+        "skipJobId": sorted(skip_ids),
     }
-    run = client.actor(config.APIFY_ACTOR_ID).call(run_input=run_input)
+    run = client.actor(config.APIFY_ACTOR_ID).call(run_input=run_input, timeout_secs=config.RUN_TIMEOUT_SECS)
     if run is None or run.get("status") != "SUCCEEDED":
         status = run.get("status") if run else "no run returned"
         raise RuntimeError(f"Apify run for '{keyword}' did not succeed: {status}")
@@ -47,10 +48,12 @@ def land_raw(conn, run_id, keyword, items, fetched_at):
     return inserted
 
 
-def search_keyword(client, keyword):
-    fetched_at = datetime.now(timezone.utc)
-    run_id, items = run_search(client, keyword)
-    return run_id, items, fetched_at
+def recently_seen(conn):
+    """Job ids fetched in the last SKIP_SEEN_DAYS days."""
+    since = datetime.now(timezone.utc) - timedelta(days=config.SKIP_SEEN_DAYS)
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT job_id FROM raw.apify_jobs WHERE fetched_at >= %s", (since,))
+        return {row[0] for row in cur.fetchall()}
 
 
 def main():
@@ -59,20 +62,22 @@ def main():
     total = 0
     failed = []
     try:
-        with ThreadPoolExecutor(max_workers=config.MAX_PARALLEL_SEARCHES) as pool:
-            futures = {pool.submit(search_keyword, client, kw): kw for kw in config.SEARCH_KEYWORDS}
-            # land each run as it finishes; one failed keyword does not lose the others
-            for future in as_completed(futures):
-                keyword = futures[future]
-                try:
-                    run_id, items, fetched_at = future.result()
-                except Exception as exc:
-                    failed.append(keyword)
-                    print(f"'{keyword}': FAILED: {exc}")
-                    continue
-                inserted = land_raw(conn, run_id, keyword, items, fetched_at)
-                print(f"'{keyword}': run {run_id}, {len(items)} fetched, {inserted} landed")
-                total += inserted
+        seen = recently_seen(conn)
+        print(f"skipping {len(seen)} jobs fetched in the last {config.SKIP_SEEN_DAYS} days")
+        # one keyword at a time, so each search skips what the earlier ones found;
+        # one failed keyword does not lose the others
+        for keyword in config.SEARCH_KEYWORDS:
+            fetched_at = datetime.now(timezone.utc)
+            try:
+                run_id, items = run_search(client, keyword, seen)
+            except Exception as exc:
+                failed.append(keyword)
+                print(f"'{keyword}': FAILED: {exc}")
+                continue
+            inserted = land_raw(conn, run_id, keyword, items, fetched_at)
+            seen.update(str(item["id"]) for item in items)
+            print(f"'{keyword}': run {run_id}, {len(items)} fetched, {inserted} landed")
+            total += inserted
     finally:
         conn.close()
     if failed:

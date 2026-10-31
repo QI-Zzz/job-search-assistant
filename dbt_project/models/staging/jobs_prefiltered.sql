@@ -31,12 +31,15 @@ SELECT
     english_word_count,
     CASE
         WHEN title_lower ~ '{{ rules.pool_title }}' THEN 'talent pool, not a vacancy'
+        WHEN LOWER(company_name) ~ '{{ rules.excluded_company }}' THEN 'excluded company'
         WHEN experience_level IN ({{ "'" ~ rules.excluded_experience_levels | join("', '") ~ "'" }}) THEN 'LinkedIn level: ' || experience_level
         WHEN contract_type IN ({{ "'" ~ rules.excluded_contract_types | join("', '") ~ "'" }}) THEN 'contract type: ' || contract_type
         WHEN title_lower ~ '{{ rules.lead_title }}' THEN 'lead or manager title'
         WHEN title_lower ~ '{{ rules.senior_title }}' THEN 'senior title'
         WHEN title_lower ~ '{{ rules.junior_track_title }}' THEN 'intern or trainee title'
+        WHEN title_lower ~ '{{ rules.academic_title }}' THEN 'academic title'
         WHEN title_lower ~ '{{ rules.freelance_title }}' THEN 'freelance title'
+        WHEN LOWER(description) ~ '{{ rules.freelance_description }}' THEN 'freelance in description'
         WHEN title_lower ~ '{{ rules.other_language_title }}' THEN 'title asks for another language'
         WHEN LOWER(location) !~ '{{ rules.allowed_location }}' THEN 'outside Amsterdam / Utrecht'
         WHEN dutch_word_count > english_word_count THEN 'description in Dutch'

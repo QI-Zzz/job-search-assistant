@@ -29,6 +29,8 @@ facts AS (
         e.extraction ->> 'dutch_requirement' AS dutch_requirement,
         (e.extraction ->> 'leads_team')::BOOLEAN AS leads_team,
         ARRAY(SELECT JSONB_ARRAY_ELEMENTS_TEXT(e.extraction -> 'tech_stack')) AS tech_stack,
+        e.extraction ->> 'role_family' AS role_family,
+        e.extraction ->> 'role_family_reason' AS role_family_reason,
         e.extraction -> 'evidence' AS evidence
     FROM passed_free_rules AS p
     LEFT JOIN latest_extraction AS e USING (job_id)
@@ -46,6 +48,9 @@ SELECT
         WHEN f.dutch_requirement = 'required' THEN 'Dutch required'
         WHEN f.years_required_min > {{ rules.max_years_required }} THEN 'more than {{ rules.max_years_required }} years required'
         WHEN f.leads_team THEN 'leads a team'
+        -- extractions from before prompt v2 have no role family
+        WHEN f.role_family IS NULL THEN 'no role family yet'
+        WHEN f.role_family NOT IN ({{ "'" ~ rules.keep_role_families | join("', '") ~ "'" }}) THEN 'role family: ' || f.role_family
     END AS drop_reason
 FROM facts AS f
 JOIN {{ ref('stg_jobs') }} AS j USING (job_id)

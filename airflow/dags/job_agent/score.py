@@ -1,7 +1,7 @@
 """Pass 2: score eligible jobs for career value and fit.
 
 Career value runs first and never sees the CV. Fit compares the job with the candidate
-profile and is skipped for Tier 4 jobs. Weighted scores and selection are done in dbt.
+profile. Every eligible job gets both scores; weighted scores and ordering are done in dbt.
 Runs in the LLM virtualenv, from airflow/dags:
     /home/airflow/llm_venv/bin/python -m job_agent.score [--limit N]
 """
@@ -14,6 +14,7 @@ from typing import Literal
 from psycopg2.extras import Json
 from pydantic import BaseModel, Field
 
+from job_agent import config
 from job_agent.db import get_connection
 from job_agent.llm import call_structured, format_posting, get_client, report, run_parallel
 
@@ -21,7 +22,7 @@ MODEL = "claude-sonnet-5-5"
 EFFORT = "low"
 # bump when a prompt or schema changes; jobs are rescored per version
 CAREER_PROMPT_VERSION = "v1"
-FIT_PROMPT_VERSION = "v1"
+FIT_PROMPT_VERSION = "v2"  # v2: one overall score instead of four weighted dimensions
 PROFILE_PATH = os.getenv("PROFILE_PATH", "/opt/airflow/profile/candidate_profile.md")
 
 CAREER_PROMPT = """You judge how good a job is for the long-term career of an early-career professional \
@@ -65,20 +66,13 @@ summary: one sentence on the main reason for the tier."""
 FIT_PROMPT = """You judge how well a job matches a candidate's background: could she realistically \
 get this job? Do not judge whether the job is good for her career; that is scored separately.
 
-Score each dimension 1-10 and give a one-sentence reason before the score.
-
-1. skills_match (35%): do her tools and skills cover what the job requires?
-   2 = core stack missing (e.g. Java, Spark); 5 = about half covered, the rest learnable; \
-9 = most of it covered (e.g. SQL, Python, dbt, Airflow, BigQuery).
-2. experience_level (25%): does about 2 years of experience fit what the job asks?
-   2 = asks 5+ years or a senior scope; 5 = asks 3-4 years, she could stretch; \
-9 = junior to medior, 1-3 years.
-3. role_domain_match (25%): is the work similar to what she has done?
-   2 = unrelated (e.g. sales quotas, clinical, legal); 5 = adjacent (e.g. finance controlling, \
-BI in a new industry); 9 = analytics or data pipelines, forecasting, retail or operations.
-4. other_must_haves (15%): anything else that blocks her?
-   2 = a required degree, certification or language she lacks (e.g. German, CISSP); \
-5 = one soft gap; 9 = nothing blocking.
+Give one overall fit score from 1 to 10, as a recruiter reading her CV against this posting would. \
+Weigh together whatever matters most for this job: her skills and tools, her level of experience \
+(about 2 years), how close the work is to what she has done, and anything that would block her \
+(a required language, degree or certification). Write the reason first, then the score.
+   2 = she would not get an interview: core skills or a hard requirement missing, or a much more \
+senior role; 5 = a stretch: about half matches and the rest is learnable, worth applying if she \
+wants it; 9 = a strong match: she does most of this work already at the right level.
 
 match_reasons: 2-4 short, specific reasons this job matches her background, written to her \
 ("Your dbt migration work at Coolblue..."). Only real matches; fewer reasons if the match is weak.
@@ -105,10 +99,8 @@ class CareerValue(BaseModel):
 
 
 class Fit(BaseModel):
-    skills_match: Dimension
-    experience_level: Dimension
-    role_domain_match: Dimension
-    other_must_haves: Dimension
+    reason: str
+    score: int = Field(ge=1, le=10)
     match_reasons: list[str]
     gaps: list[str]
 
@@ -120,17 +112,7 @@ def load_profile():
 
 
 def jobs_to_score(conn, score_type, prompt_version, profile_version, limit=None):
-    """Eligible jobs without a successful score of this type and version.
-
-    Fit only considers jobs whose current career value score is not Tier 4.
-    """
-    tier_filter = """
-        AND EXISTS (
-            SELECT 1 FROM raw.job_scores AS c
-            WHERE c.job_id = e.job_id AND c.score_type = 'career_value'
-              AND c.prompt_version = %(career_version)s AND c.status = 'ok'
-              AND (c.result ->> 'tier')::INT < 4
-        )""" if score_type == "fit" else ""
+    """Recent eligible jobs without a successful score of this type and version."""
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -138,17 +120,18 @@ def jobs_to_score(conn, score_type, prompt_version, profile_version, limit=None)
             FROM staging.jobs_eligibility AS e
             JOIN staging.stg_jobs AS j USING (job_id)
             WHERE e.drop_reason IS NULL
+              AND j.first_fetched_at >= NOW() - MAKE_INTERVAL(days => %(recent_days)s)
               AND NOT EXISTS (
                   SELECT 1 FROM raw.job_scores AS s
                   WHERE s.job_id = e.job_id AND s.score_type = %(score_type)s
                     AND s.prompt_version = %(prompt_version)s
                     AND s.profile_version = %(profile_version)s AND s.status = 'ok'
-              ){tier_filter}
+              )
             ORDER BY j.first_fetched_at DESC
             LIMIT %(limit)s
             """,
             {"score_type": score_type, "prompt_version": prompt_version,
-             "profile_version": profile_version, "career_version": CAREER_PROMPT_VERSION,
+             "profile_version": profile_version, "recent_days": config.SCORE_RECENT_DAYS,
              "limit": limit},
         )
         return cur.fetchall()
