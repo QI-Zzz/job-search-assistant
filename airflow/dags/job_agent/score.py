@@ -22,7 +22,7 @@ MODEL = "claude-sonnet-5-5"
 EFFORT = "low"
 # bump when a prompt or schema changes; jobs are rescored per version
 CAREER_PROMPT_VERSION = "v1"
-FIT_PROMPT_VERSION = "v2"  # v2: one overall score instead of four weighted dimensions
+FIT_PROMPT_VERSION = "v3"  # v2: one overall score instead of four weighted dimensions; v3: written to her as "you"
 PROFILE_PATH = os.getenv("PROFILE_PATH", "/opt/airflow/profile/candidate_profile.md")
 
 CAREER_PROMPT = """You judge how good a job is for the long-term career of an early-career professional \
@@ -66,6 +66,9 @@ summary: one sentence on the main reason for the tier."""
 FIT_PROMPT = """You judge how well a job matches a candidate's background: could she realistically \
 get this job? Do not judge whether the job is good for her career; that is scored separately.
 
+She reads your answer in her daily email, so write the reason, match_reasons and gaps to her \
+directly, as "you" and "your", never "she", "her" or "the candidate".
+
 Give one overall fit score from 1 to 10, as a recruiter reading her CV against this posting would. \
 Weigh together whatever matters most for this job: her skills and tools, her level of experience \
 (about 2 years), how close the work is to what she has done, and anything that would block her \
@@ -74,7 +77,7 @@ Weigh together whatever matters most for this job: her skills and tools, her lev
 senior role; 5 = a stretch: about half matches and the rest is learnable, worth applying if she \
 wants it; 9 = a strong match: she does most of this work already at the right level.
 
-match_reasons: 2-4 short, specific reasons this job matches her background, written to her \
+match_reasons: 2-4 short, specific reasons this job matches her background \
 ("Your dbt migration work at Coolblue..."). Only real matches; fewer reasons if the match is weak.
 gaps: the main things the job asks for that her background does not show. Empty list if none.
 

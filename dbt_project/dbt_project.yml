@@ -13,7 +13,7 @@ vars:
     lead_title: '\m(lead|leader|head|manager|managing|principal|director|chief|vp|vice president|supervisor|teamlead|teamleider)\M'
     senior_title: '\m(senior|sr|staff)\M'
     # also Dutch thesis / research internships and graduate programmes named by year ("SDE - 2027")
-    junior_track_title: '\m(intern|internship|stage|stagiair|werkstudent|trainee|graduate|afstudeer\w*|onderzoeksstage|20[2-3][0-9])\M'
+    junior_track_title: '\m(intern|internship|stage|stagiair|werkstudent|trainee|graduate|afstudeer\w*|onderzoeksstage|student|20[2-3][0-9])\M'
     # university teaching and research roles; pass 1 labelled a lecturer and a postdoc as data / ML
     academic_title: '\m(phd|postdoc|postdoctoral|lecturer|professor|docent|hoogleraar)\M'
     freelance_title: '\m(freelance|freelancer|zzp|interim)\M'
@@ -22,8 +22,9 @@ vars:
     freelance_description: '(freelance|\mzzp)\M'
     # also agency traineeship programmes listed as several jobs ("Business Analyst | Talent Program")
     pool_title: '(talent pool|candidate pool|talent program|open application|open sollicitatie)'
-    # companies Amy does not want to work for: Coolblue, bol, MediaMarkt and the Big Four (Deloitte, PwC, EY, KPMG)
-    excluded_company: '(cool ?blue|\mbol\M|media ?markt|deloitte|pwc|pricewaterhouse|\mey\M|ernst (&|and) young|kpmg)'
+    # companies Amy does not want to work for: Coolblue, bol, MediaMarkt and the Big Four (Deloitte, PwC, EY, KPMG);
+    # also Jobgether, an aggregator that reposts remote jobs from elsewhere with hidden location or industry requirements
+    excluded_company: '(cool ?blue|\mbol\M|media ?markt|deloitte|pwc|pricewaterhouse|\mey\M|ernst (&|and) young|kpmg|jobgether)'
     # titles asking for another language; Mandarin / Chinese are left out on purpose (Amy is a native speaker)
     # "German-speaking", "Dutch speaker", "(French)", or a language at the end ("Sales Trader - Polish")
     other_language_title: '(\m(dutch|flemish|german|french|spanish|italian|portuguese|polish|czech|hungarian|swedish|danish|norwegian|finnish|nordic|turkish|arabic|russian|japanese|korean)[- ]speak(ing|ers?)\M|\((dutch|flemish|german|french|spanish|italian|portuguese|polish|czech|hungarian|swedish|danish|norwegian|finnish|nordic|turkish|arabic|russian|japanese|korean)\)|[-–] (dutch|flemish|german|french|spanish|italian|portuguese|polish|czech|hungarian|swedish|danish|norwegian|finnish|nordic|turkish|arabic|russian|japanese|korean)$)'

@@ -87,7 +87,9 @@ ranked AS (
         *,
         -- technical advantage only breaks ties
         ROW_NUMBER() OVER (
-            ORDER BY overall_score DESC NULLS LAST, technical_advantage DESC
+            -- fit first (can I get it?), then career value; technical advantage only breaks ties.
+            -- Sorting by overall_score put senior roles with high career value but fit 3 near the top
+            ORDER BY fit_score DESC NULLS LAST, career_value_score DESC, technical_advantage DESC
         ) AS rank
     FROM scored
 )

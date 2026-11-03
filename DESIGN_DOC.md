@@ -1,6 +1,6 @@
 # Personal Job Agent — Design Doc
 
-Last updated: 2026-10-31
+Last updated: 2026-11-03
 
 ## Purpose
 
@@ -88,12 +88,12 @@ Rules on fields Apify already returns; no LLM, no cost. Each dropped job keeps a
 | Rule | Field |
 | --- | --- |
 | Talent pool, not a vacancy ("talent pool", "candidate pool", "talent program", "open application") | title |
-| Excluded company: Coolblue, bol, MediaMarkt and the Big Four (Deloitte, PwC, EY, KPMG) | company |
+| Excluded company: Coolblue, bol, MediaMarkt, the Big Four (Deloitte, PwC, EY, KPMG) and Jobgether (an aggregator reposting remote jobs from elsewhere) | company |
 | LinkedIn level Director, Executive or Internship ("Mid-Senior" is not used: most jobs say "Not Applicable") | `experience_level` |
 | LinkedIn contract type Internship, Volunteer, Part-time, Contract or Temporary (fixed-term employee jobs are listed as Full-time and are kept) | `contract_type` |
 | Lead, leader, head, manager, managing, principal, director, chief, VP, vice president or supervisor | title |
 | Senior, Sr or Staff | title |
-| Intern, trainee, graduate, afstudeer(stage), onderzoeksstage, or a year such as "2027" | title |
+| Intern, trainee, graduate, student, afstudeer(stage), onderzoeksstage, or a year such as "2027" | title |
 | Academic: PhD, postdoc, postdoctoral, lecturer, professor, docent, hoogleraar | title |
 | Freelance, ZZP or interim | title |
 | "Freelance" or "ZZP" in the description (not "freelancers", which agencies use in boilerplate); also catches AI-training gig work | description |
@@ -169,7 +169,7 @@ Career value does not use the CV, so it does not need recomputing when the profi
 
 Fit means how well the job matches Amy's background. It compares the job with the candidate profile (`profile/candidate_profile.md`, built from her two CVs and kept out of git because the repo is public).
 
-Since prompt v2 (2026-10-31) fit is **one overall score from 1 to 10**, judged the way a recruiter would read her CV against the posting: skills and tools, level of experience (about 2 years), how close the work is to what she has done, and any hard blocker (language, degree, certification) are weighed together. 2 = no interview; 5 = a stretch worth applying to; 9 = a strong match. It returns a one-sentence reason, 2–4 match reasons (written to Amy) and the main gaps.
+Since prompt v2 (2026-10-31) fit is **one overall score from 1 to 10**, judged the way a recruiter would read her CV against the posting: skills and tools, level of experience (about 2 years), how close the work is to what she has done, and any hard blocker (language, degree, certification) are weighed together. 2 = no interview; 5 = a stretch worth applying to; 9 = a strong match. It returns a one-sentence reason, 2–4 match reasons and the main gaps, all written to Amy as "you" (v3, 2026-11-03), because they go straight into her email.
 
 v1 had four weighted dimensions (skills 35%, experience level 25%, role and domain 25%, other must-haves 15%); Amy found the split unhelpful, and a fixed weighting cannot say that one missing requirement outweighs everything else.
 
@@ -179,7 +179,7 @@ v1 had four weighted dimensions (skills 35%, experience level 25%, role and doma
 - Only jobs first fetched in the last 2 days are scored (`SCORE_RECENT_DAYS` in `config.py`), so a new prompt version re-scores recent jobs only, not every job ever found. Jobs already scored with the current versions are skipped, so a normal day scores only that day's new eligible jobs (about 20).
 - The LLM returns the sub-scores (each with a one-sentence reason), the tier and the technical-advantage bonus. Anchors for 2, 5 and 9 are in the prompts.
 - The rubric and profile sit in a cached system prompt. Results land in `raw.job_scores`; the profile version is a hash of the profile file.
-- `mart.job_ranking` computes the weighted scores and `overall = (career value + fit) / 2`, and orders the jobs by it (technical advantage only breaks ties). It lists only jobs first fetched in the last 2 days (`vars.ranking.recent_days`). There is no cut: every scored job goes in the email, with both scores, so Amy decides. The weights are vars in `dbt_project.yml`.
+- `mart.job_ranking` computes the weighted scores and `overall = (career value + fit) / 2`, and orders the jobs by **fit first, then career value** (technical advantage only breaks ties). Until 2026-11-03 they were ordered by the overall score, which put senior roles with high career value but fit 3 near the top. It lists only jobs first fetched in the last 2 days (`vars.ranking.recent_days`). There is no cut: every scored job goes in the email, with both scores, so Amy decides. The weights are vars in `dbt_project.yml`.
 
 **First run (2026-10-29):** 73 eligible jobs, no failures; tiers 9 / 33 / 30 / 1; 15 selected. Sales and clinical roles scored Tier 2–3 on career value but fit 1–3, so none were selected. Known issues seen: a graduate programme ("SDE – 2027", now caught by the free rules), a talent pool (now caught), and one job posted by two agencies.
 
@@ -205,7 +205,8 @@ v1 had four weighted dimensions (skills 35%, experience level 25%, role and doma
 | Fri 2026-10-30 (done) | Pass 1 v2 on all 343 free-rule survivors, by hand | Role family labels and the new eligibility drop |
 | Sat 2026-10-31, 07:30 (done) | Scheduled, the new 13-keyword list | 1,212 new jobs, 122 past the free rules, 26 eligible, no timeouts; FERO's Junior Data Analyst came through as data_analytics. About 6 of the 26 were off-target |
 | Sat 2026-10-31 (done) | Pass 2 on every eligible job, by hand | 52 new jobs scored, 0 failures; 78 ranked, 29 meet the bar, 15 selected. The off-target jobs Haiku let through (secretarial, aviation finance, tender, SAP, research) all fall below the fit bar. Misses: a Michael Page procurement job was selected, and duplicate postings are ranked twice |
-| **Tue 2026-11-03 onward** | Scheduled, Tuesday to Saturday, with pass 2 | Daily review of scores and selection |
+| Tue 2026-11-03, 07:30 (done) | Scheduled, first full run with the skip list and pass 2 | All 6 tasks succeeded in 39 min (fetch 34 min). 1,412 new jobs, 115 past the free rules, 39 eligible and scored, 0 failures. Apify $0.59 (was $1.60), Haiku $0.06, Sonnet ~$0.90. 6 jobs with fit ≥ 5 |
+| **Wed 2026-11-04 onward** | Scheduled, Tuesday to Saturday | Daily review of scores and fit reasons |
 
 The Mac must be awake with Docker running at 07:30 (`caffeinate -ims -t 36000` the evening before, plugged in, lid open).
 
@@ -273,6 +274,7 @@ Apify is the largest cost during the keyword test; it drops once the keyword lis
 | 2026-10-29 | Drop Part-time, Internship and Volunteer contracts; keep Contract; keep "Randstad" locations | Amy's choice |
 | 2026-10-29 | Location narrowed to Amsterdam, Amstelveen, Hoofddorp, Schiphol, Utrecht and the Randstad (Haarlem, Diemen, Zaandam, Almere and Hilversum removed) | Amy's edit; replaces the earlier choice to keep Haarlem, Diemen and Almere |
 | 2026-10-29 | Schedule Tuesday to Saturday 07:30, first run Friday 2026-10-30; pass 2 off during refinement | Weekend postings are rarely worth checking; refine steps 1–4 first |
+| 2026-11-03 | Order the list by fit, then career value; exclude Jobgether; add "student" to the trainee title rule; fit prompt v3 writes to Amy as "you" | Review of the first full run (Tue 2026-11-03: 1,412 new jobs, 39 eligible and scored, ~$1.55, Apify $0.59). Sorting by the average put fit-3 senior roles at #6 and #12; 6 of the 39 were low-fit Jobgether reposts; a student assistant post got through; fit reasons mixed "she" and "you" |
 | 2026-10-31 | Pass 2 scores, and the ranking lists, only jobs first fetched in the last 2 days | Changing the fit prompt to v2 re-scored all 78 eligible jobs ever found; over months that would be thousands of jobs per prompt change. The email only needs recent jobs |
 | 2026-10-31 | Keywords run one after another; each run passes the jobs fetched in the last 3 days (and by earlier keywords today) as `skipJobId` | 64% of Saturday's results were jobs another keyword had already found, and Apify charges per returned result. Tested: with Saturday's 1,268 job ids skipped, "data analyst" returned 1 job ($0.001) instead of 240 ($0.10). Expected ~$0.55 per run instead of ~$1.60; the fetch takes longer (one run at a time). `keyword_stats` now shows what each keyword adds after the ones before it |
 | 2026-10-31 | Fit prompt v2: one overall score instead of four weighted dimensions | Amy's choice: the four-way split was not useful to her |
