@@ -9,7 +9,7 @@ On each working morning, find the newly posted LinkedIn jobs that are worth Amy'
 Each job answers three questions, in order:
 
 1. **Can I apply?** Eligibility: hard rules, no judgement.
-2. **Is it good for my career?** Career value: the rubric below.
+2. **What would the job really be like?** Role insight: what you'd do, what it builds for you, and watch-outs, judged against Amy's job matching framework. No score.
 3. **Can I get it?** Fit: Amy's background against the job's requirements.
 
 **In scope:** daily fetch via Apify, filtering, LLM extraction and scoring, a daily email, and later a feedback loop.
@@ -18,7 +18,7 @@ Each job answers three questions, in order:
 
 ## Current phase: testing pass 2
 
-Steps 1–4 (search, free rules, pass 1, eligibility) were refined first, because they decide both the cost and whether good jobs reach Amy at all. After the review of the Sat 2026-10-31 run, pass 2 was switched on (`RUN_PASS_2 = True` in `config.py`). No email is sent yet. See [Test plan](#test-plan).
+Steps 1–4 (search, free rules, pass 1, eligibility) were refined first, because they decide both the cost and whether good jobs reach Amy at all. After the review of the Sat 2026-10-31 run, pass 2 was switched on (`RUN_PASS_2 = True` in `config.py`). The daily email was built on 2026-11-03 and goes out once the Gmail app password is in `.env`. See [Test plan](#test-plan).
 
 ## Design principles
 
@@ -54,9 +54,9 @@ Step  Task                       What it does                                   
 2     dbt_run_prefilter          normalize + free rules on title/location/fields    dbt                  on
 3     extract_job_facts          pass 1: read the description, extract facts        Python + Haiku       on
 4     dbt_run_eligibility        rules on the extracted facts; keyword_stats        dbt                  on
-5     score_jobs                 pass 2: career value + fit                          Python + Sonnet      on
+5     score_jobs                 pass 2: role insight + fit                          Python + Sonnet      on
 6     dbt_run_ranking            weighted scores, selection                          dbt                  on
-7     email                      send the selected jobs, record what was sent       Python               not built
+7     send_email                 email the new scored jobs, record what was sent    Python + Gmail SMTP  on
 ```
 
 ### 1. Search
@@ -104,8 +104,9 @@ Rules on fields Apify already returns; no LLM, no cost. Each dropped job keeps a
 ### 3. Pass 1: extract facts (Haiku, `job_agent/extract.py`)
 
 - A cheap model reads the full description and only extracts facts: posting language, minimum years required, Dutch required / nice to have / not mentioned, whether the role leads a team, the tech stack, and short quotes as evidence.
-- Results land in `raw.job_extractions` (one row per job per prompt version). Jobs already extracted for the current prompt version are never sent again; failed ones are retried on the next run.
-- **Role family (since prompt v2; current prompt v4, 2026-10-30).** Pass 1 also labels each job with one role family, judged from the responsibilities rather than the title, plus a one-sentence reason. From v3 each family lists what does NOT belong in it (merchandising, planning and research are not data analytics; DevOps, SRE and full-stack are not data engineering; onboarding, audit and HR are not BA/consulting; presales only for software, data, cloud or AI products). v4 adds marketing campaign roles to `other`, GTM / revenue-operations engineering to data engineering, and falls back to the title when a posting has no responsibilities. Unwanted families are dropped in eligibility, before Sonnet. The keep list is `vars.eligibility.keep_role_families` in `dbt_project.yml`:
+- Results land in `raw.job_extractions` (one row per job per prompt version). Jobs already extracted for the current prompt version are never sent again; failed ones are retried on the next run. Only jobs first fetched in the last 2 days are extracted (`EXTRACT_RECENT_DAYS`), so a new prompt version re-extracts recent jobs only.
+- **Visa sponsorship (since prompt v5, 2026-11-03).** Amy needs a work visa, so pass 1 reads what the posting says about it: `offered` (sponsors visas or work permits, the highly skilled migrant / kennismigrant route, a recognised sponsor), `not_offered` (no sponsorship, or candidates must already have the right to work in the Netherlands or the EU), or `not_mentioned` (most postings; a relocation package alone counts as not mentioned). A quote goes into the evidence.
+- **Role family (since prompt v2; current prompt v6, 2026-11-04).** Pass 1 also labels each job with one role family, judged from the responsibilities rather than the title, plus a one-sentence reason. From v3 each family lists what does NOT belong in it (merchandising, planning and research are not data analytics; DevOps, SRE and full-stack are not data engineering; onboarding, audit and HR are not BA/consulting; presales only for software, data, cloud or AI products). v4 adds marketing campaign roles to `other`, GTM / revenue-operations engineering to data engineering, and falls back to the title when a posting has no responsibilities. v6 splits `data_science` (statistical and predictive modelling, ML model development, data scientist titles) out of data engineering. Unwanted families are dropped in eligibility, before Sonnet. The keep list is `vars.eligibility.keep_role_families` in `dbt_project.yml`:
 
 | Keep | Drop |
 | --- | --- |
@@ -113,6 +114,7 @@ Rules on fields Apify already returns; no LLM, no cost. Each dropped job keeps a
 | `data_ml_ai_engineering` | `finance_controlling` |
 | `business_analysis_consulting` | `software_engineering` (dropped since 2026-10-30) |
 | | `presales_solutions` (dropped since 2026-10-30) |
+| | `data_science` (dropped since 2026-11-04) |
 | | `operations_supply_chain` |
 | | `it_infrastructure_security` (IT support, networks, security, field service) |
 | | `other` (marketing execution, design, HR, legal, clinical, hardware, retail, AI-training gig work…) |
@@ -130,40 +132,26 @@ Rules on the pass 1 facts; thresholds under `vars.eligibility` in `dbt_project.y
 - Dutch is required ("nice to have" is kept);
 - more than 5 years are required (5 is kept);
 - the role leads a team;
+- the posting says it does not sponsor a visa, or that candidates must already have the right to work in the Netherlands or the EU (`'no visa sponsorship'`). Postings that say nothing are kept, because most don't mention visas;
 - its role family is not on the keep list (`'role family: …'`); extractions from before v2 have none (`'no role family yet'`).
 
 ### 5. Scoring (pass 2)
 
-Two separate scores, both returned as validated JSON.
+Two separate calls per job, both returned as validated JSON: role insight (no score) and fit (1–10).
 
-#### Career value: "Is it good for my career?"
+#### Role insight: "What would the job really be like?"
 
-Four core dimensions, each 1–10:
+Since 2026-11-05 (`INSIGHT_PROMPT_VERSION` v1) this replaces the career value score. Amy found scores and tiers less useful than understanding what a job involves beyond the posting.
 
-| Dimension | Weight | Assesses |
-| --- | --- | --- |
-| Salary ceiling | 30% | Long-term earning potential, salary progression, access to high-paying employers and markets, paths into leadership or other lucrative tracks |
-| Geographic mobility | 25% | International demand, cross-border skill recognition, remote work, feasibility of working in the Netherlands, UAE, Singapore or the US |
-| Skill transferability | 25% | Whether the skills and experience transfer across industries, companies, functions and countries, including pivots into other careers |
-| Low lock-in risk | 20% | Dependence on local regulations, niche industry knowledge, proprietary systems, country-specific qualifications or a narrow track. **Higher score = lower risk.** |
+The prompt includes Amy's job matching framework, `profile/job_matching_framework.md` (kept out of git with the profile), and uses its sections 1, 3 and 9 (who she is, what she likes and dislikes, guiding principles), not its scoring. The file's hash is stored as the profile version, so editing it redoes the insight for recent jobs. Written to Amy as "you"; inferences are marked as such. Fields:
 
-**Technical advantage** is a separate bonus, not a gatekeeper:
+- `company_summary`: what the company does.
+- `main_mode`: building, advising, coordinating, operating, maintaining or selling.
+- `day_to_day`: what you would spend the week on, what you would own, who you work with, and the split between building and routine operations.
+- `what_it_builds`: skills and experience, how portable they are, realistic next roles in 3–5 years.
+- `watch_outs`: up to three red flags against the framework's dislikes (routine reporting, vague ownership, proprietary systems, hidden sales targets, a local language in practice, level mismatch).
 
-- Non-technical roles (strategy, commercial, operations, product, consulting, management) can score highly.
-- A technical job is not automatically good if it has poor salary prospects, limited mobility or high lock-in.
-- Technical depth, AI exposure, coding and data skills improve a rating when they create additional career options.
-- A role is not favoured just because it involves more coding.
-
-**Tiers**, based on actual responsibilities and likely career outcomes, never on the title alone:
-
-| Tier | Meaning |
-| --- | --- |
-| 1 — Excellent | Strong earning potential, international mobility, transferable skills, low lock-in |
-| 2 — Good | Attractive overall, with one meaningful compromise |
-| 3 — Conditional | Limited upside in one or more important dimensions; only if the trade-offs are justified |
-| 4 — Poor | Several serious constraints on earning potential, mobility or career freedom |
-
-Career value does not use the CV, so it does not need recomputing when the profile changes.
+**Career value history:** v1–v2 (2026-10-26 to 2026-11-04) scored four dimensions (salary ceiling 30%, geographic mobility 25%, skill transferability 25%, low lock-in risk 20%) with a tier; v3 (2026-11-05, used for one test) scored the framework's eight criteria out of 100. The rows stay in `raw.job_scores` under `career_value`. On 56 jobs v3 put routine reporting roles at tier 4 and Databricks / Flow Traders engineering roles at 78–85, but those had fit 3–4, so the score added a second ranking without helping Amy decide.
 
 #### Fit: "Can I get it?"
 
@@ -175,18 +163,25 @@ v1 had four weighted dimensions (skills 35%, experience level 25%, role and doma
 
 #### How pass 2 runs (`job_agent/score.py`)
 
-- Two separate calls per job. Career value runs first and never sees the CV; fit then runs for every eligible job (before 2026-10-31 it was skipped for Tier 4).
+- Two separate calls per job. Role insight runs first and uses the framework, not the CV; fit then runs for every eligible job (before 2026-10-31 it was skipped for Tier 4).
 - Only jobs first fetched in the last 2 days are scored (`SCORE_RECENT_DAYS` in `config.py`), so a new prompt version re-scores recent jobs only, not every job ever found. Jobs already scored with the current versions are skipped, so a normal day scores only that day's new eligible jobs (about 20).
-- The LLM returns the sub-scores (each with a one-sentence reason), the tier and the technical-advantage bonus. Anchors for 2, 5 and 9 are in the prompts.
-- The rubric and profile sit in a cached system prompt. Results land in `raw.job_scores`; the profile version is a hash of the profile file.
-- `mart.job_ranking` computes the weighted scores and `overall = (career value + fit) / 2`, and orders the jobs by **fit first, then career value** (technical advantage only breaks ties). Until 2026-11-03 they were ordered by the overall score, which put senior roles with high career value but fit 3 near the top. It lists only jobs first fetched in the last 2 days (`vars.ranking.recent_days`). There is no cut: every scored job goes in the email, with both scores, so Amy decides. The weights are vars in `dbt_project.yml`.
+- Fit anchors for 2, 5 and 9 are in the prompt.
+- The framework and profile sit in cached system prompts. Results land in `raw.job_scores`; the profile version is a hash of the profile file (fit) or of the framework file (role insight).
+- `mart.job_ranking` orders the jobs by **fit** (since 2026-11-05; before that fit, then career value; until 2026-11-03 the average of the two, which put senior roles with high career value but fit 3 near the top). It lists only jobs first fetched in the last 2 days (`vars.ranking.recent_days`). There is no cut: every scored job goes in the email, so Amy decides.
 
 **First run (2026-10-29):** 73 eligible jobs, no failures; tiers 9 / 33 / 30 / 1; 15 selected. Sales and clinical roles scored Tier 2–3 on career value but fit 1–3, so none were selected. Known issues seen: a graduate programme ("SDE – 2027", now caught by the free rules), a talent pool (now caught), and one job posted by two agencies.
 
-### 6. Email (not built)
+### 6. Email (`job_agent/daily_email.py`)
 
-- **Each job in the email shows:** title, company, location, link, years required, tech stack, tier, career value score, fit score and several reasons why it matches.
-- What was sent, and when, is recorded; the feedback loop depends on it. Jobs already sent are never sent again.
+Runs after `dbt_run_ranking` and sends one email to Amy through Gmail SMTP.
+
+- **Which jobs:** every job in `mart.job_ranking` (scored, first fetched in the last 2 days) that is not in `raw.sent_jobs`, in ranking order: best fit first. There is no cut.
+- **Each job is sent once:** after a successful send, each job is recorded in `raw.sent_jobs`. A failed send records nothing, so those jobs go out the next day.
+- **Reposts are skipped:** a job with the same company and title (lowercased, without punctuation or bracketed bits such as "(m/f/d)") as a job sent in the last 30 days (`REPOST_WINDOW_DAYS`), or as a job earlier in the same email, is left out.
+- **Each job shows:** title (linked), company, location, years required, Dutch requirement, visa sponsorship, tech stack; what the company does and what the job involves day to day; what the job is mostly (building, advising, …) and what you would do day to day; what it builds for you; watch-outs; fit score and reason; gaps. The fit call still returns match reasons, but the email leaves them out (Amy's choice, 2026-11-03).
+- **Empty days:** a one-line "no new jobs" email, so a quiet day can be told apart from a broken run.
+- **Settings in `.env`:** `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (a Gmail app password, which needs 2-step verification), and optionally `EMAIL_TO` (defaults to `GMAIL_ADDRESS`). The address stays out of the repo, which is public.
+- **Preview:** `python -m job_agent.daily_email --preview PATH` writes the email as HTML without sending or recording anything.
 
 ### Candidate profile
 
@@ -231,13 +226,13 @@ Convention: **Python tasks write to `raw`; dbt owns `staging` and `mart`.** Ever
 | --- | --- | --- | --- |
 | `apify_jobs` | raw | Python | job as returned by one Apify run (JSON as received, with keyword) |
 | `job_extractions` | raw | Python | job × extraction prompt version |
-| `job_scores` | raw | Python | job × score type (career value / fit) × prompt version × profile version |
+| `job_scores` | raw | Python | job × score type (role insight / fit; career value until 2026-11-05) × prompt version × profile version |
 | `stg_jobs` | staging | dbt | unique job (latest payload, first/last seen, all keywords that found it) |
 | `jobs_prefiltered` | staging | dbt | job, with a free-rule drop reason |
 | `jobs_eligibility` | staging | dbt | job that passed the free rules, with pass 1 facts and a drop reason |
 | `job_ranking` | mart | dbt | scored job, with weighted scores, rank and `selected` |
 | `keyword_stats` | mart | dbt | fetch day × keyword |
-| `sent_jobs` (planned) | raw | Python | job × email sent |
+| `sent_jobs` | raw | Python | job sent (once), with title and company for repost checks |
 | `feedback` (v2) | raw | FastAPI | reaction submitted |
 | `volume_test` (temporary) | sandbox | by hand | job from the no-keyword test; drop when done |
 
@@ -251,7 +246,7 @@ Measured at Anthropic and Apify list prices, 2026-10:
 | Pass 1 (Haiku) | ~$0.0004 per job | 103 jobs (v1): ~$0.03; 343 jobs (v2): ~$0.15 |
 | Pass 2 (Sonnet) | ~$0.016 per job (both calls) | 73 jobs: ~$1.20 |
 
-Apify is the largest cost during the keyword test; it drops once the keyword list is pruned. Pass 2 cost depends on how many jobs reach it, which the role-family filter reduces. Options if pass 2 is too expensive: Haiku for career value, or the Batch API (50% off).
+Apify is the largest cost during the keyword test; it drops once the keyword list is pruned. Pass 2 cost depends on how many jobs reach it, which the role-family filter reduces. Options if pass 2 is too expensive: Haiku for role insight, or the Batch API (50% off).
 
 ## Decision log
 
@@ -274,6 +269,13 @@ Apify is the largest cost during the keyword test; it drops once the keyword lis
 | 2026-10-29 | Drop Part-time, Internship and Volunteer contracts; keep Contract; keep "Randstad" locations | Amy's choice |
 | 2026-10-29 | Location narrowed to Amsterdam, Amstelveen, Hoofddorp, Schiphol, Utrecht and the Randstad (Haarlem, Diemen, Zaandam, Almere and Hilversum removed) | Amy's edit; replaces the earlier choice to keep Haarlem, Diemen and Almere |
 | 2026-10-29 | Schedule Tuesday to Saturday 07:30, first run Friday 2026-10-30; pass 2 off during refinement | Weekend postings are rarely worth checking; refine steps 1–4 first |
+| 2026-11-08 | Keep dropping manager, lead and supervisor titles | Tried letting them through to pass 1 on 2026-11-07 (after an adidas "Manager" job asking for 2 years was dropped): 25 more jobs in 2 days, mostly not Amy's target roles. Reverted on her review; an occasional miss like adidas is accepted |
+| 2026-11-05 | Drop career value; role insight instead (day to day, what it builds, watch-outs, judged against the framework; no score); order by fit only | Amy's choice after seeing v3: she wants to understand what a job really involves rather than another score. About $0.013 per job (career value v2 $0.010, v3 $0.017) |
+| 2026-11-05 | Career value prompt v3 uses Amy's job matching framework (eight criteria, total out of 100, verdict, side checks) from `profile/job_matching_framework.md`; fit unchanged; filters unchanged | Amy wrote the framework to judge jobs by long-term career outcomes; it replaces the four-dimension rubric. Kept as a file so she can edit it without code changes |
+| 2026-11-04 | No data science jobs: a free title rule (`data_science_title`: "data scien…", "scientist") and a new pass 1 role family `data_science` (prompt v6), split out of `data_ml_ai_engineering` and not kept. Data engineering, ML/AI platforms, MLOps and LLM engineering stay | Amy's choice after the Wed 2026-11-04 email, which had two data scientist jobs (Kramp, Basic-Fit) |
+| 2026-11-03 | Email: add what the company does and what the job involves (career prompt v2); leave out the match reasons | Amy's choice: she wants to understand the job and the company at a glance; the reasons why it matches added length without helping her decide |
+| 2026-11-03 | Visa sponsorship read from the job description in pass 1 (prompt v5); drop jobs that rule it out; the email shows "visa sponsorship offered" or "visa not mentioned" | Amy needs visa support and chose the description over the IND register of recognised sponsors (about 13,000 employers, downloadable; still an option if the description alone misses too much). Only an explicit no is dropped, since most postings say nothing |
+| 2026-11-03 | Daily email through Gmail SMTP; every new scored job, sent once; reposts within 30 days skipped; a short email on empty days | Amy's choices. Gmail SMTP is free and sends from and to her own address; skipping reposts avoids seeing the same job twice; the empty-day email shows the pipeline ran |
 | 2026-11-03 | Order the list by fit, then career value; exclude Jobgether; add "student" to the trainee title rule; fit prompt v3 writes to Amy as "you" | Review of the first full run (Tue 2026-11-03: 1,412 new jobs, 39 eligible and scored, ~$1.55, Apify $0.59). Sorting by the average put fit-3 senior roles at #6 and #12; 6 of the 39 were low-fit Jobgether reposts; a student assistant post got through; fit reasons mixed "she" and "you" |
 | 2026-10-31 | Pass 2 scores, and the ranking lists, only jobs first fetched in the last 2 days | Changing the fit prompt to v2 re-scored all 78 eligible jobs ever found; over months that would be thousands of jobs per prompt change. The email only needs recent jobs |
 | 2026-10-31 | Keywords run one after another; each run passes the jobs fetched in the last 3 days (and by earlier keywords today) as `skipJobId` | 64% of Saturday's results were jobs another keyword had already found, and Apify charges per returned result. Tested: with Saturday's 1,268 job ids skipped, "data analyst" returned 1 job ($0.001) instead of 240 ($0.10). Expected ~$0.55 per run instead of ~$1.60; the fetch takes longer (one run at a time). `keyword_stats` now shows what each keyword adds after the ones before it |
@@ -301,15 +303,9 @@ Apify is the largest cost during the keyword test; it drops once the keyword lis
 | Refinement | Haiku label noise | If pass 2 does not filter the remaining off-target jobs, options: Haiku with thinking on for the role family, or move the role family into pass 2 (Sonnet) |
 | Refinement | Role family edge cases | Whether DevOps/SRE and security engineering count as software engineering; pricing and procurement analysts; solution architects in delivery (not presales) |
 | Scoring | Anchors for every score | Draft anchors for 2 / 5 / 9 are in the prompts; review against real results |
-| Scoring | Skill transferability vs lock-in risk | They overlap; state the difference in one sentence, or merge them |
-| Scoring | Management roles | The rubric allows them to score well; eligibility drops team leads |
-| Selection | How fit and career value combine | v1: average of the two, tier ≤ 3 and fit ≥ 5; tune after feedback |
-| Selection | Tier rules | v1: the LLM assigns the tier from the rubric; move to code rules if it drifts |
-| Email | Repeat and reposted jobs | Proposal: each job is emailed at most once (`sent_jobs` by LinkedIn job ID); the email only takes jobs first fetched in today's run; a repost (same company and similar title within ~30 days, new job ID) is skipped or marked "reposted". Today `job_ranking` ranks every scored job ever, so this must be built with the email |
 | Later | Same job posted by several agencies | Needs fuzzy matching on company + title |
-| Later | Where the pipeline runs | Mac with `caffeinate` for now; an always-on machine for daily use |
+| End of week of 2026-11-02 | Where the pipeline runs | Decided 2026-11-03: refine the pipeline on the Mac this week, then move the same Docker setup to an Oracle Cloud Always Free Arm VM (up to 4 CPUs / 24 GB RAM, free). Steps and scripts in `deploy/oracle/` (2 OCPU / 12 GB Ubuntu 24.04 VM; data moved with a dump of the raw schema; ports bound to 127.0.0.1, Airflow UI through an SSH tunnel). Upgrade to Pay As You Go to avoid the idle reclaim of Always Free VMs. Migration planned for Sat 2026-11-07, after the Mac's run. Rejected: GitHub Actions + free hosted Postgres (Airflow rewrite, public logs, ~0.5 GB database limit) |
 | Later | Search beyond Amsterdam | UAE, Singapore and US jobs would need visa or sponsorship rules |
-| Later | Zero-match days | Send nothing, or a "nothing today" email |
 | Later | Profile changes | Rescore recent jobs for fit, or apply to new jobs only |
 
 ## Phasing
@@ -327,7 +323,7 @@ Apify is the largest cost during the keyword test; it drops once the keyword lis
 - [x] Airflow DAG scheduled Tuesday to Saturday at 07:30 (steps 1–4)
 - [ ] **Refine steps 1–4** (current): keyword test and pruning, free-rule review, role family in pass 1, eligibility review, daily stats
 - [ ] Switch pass 2 back on
-- [ ] Email delivery and a record of what was sent
+- [x] Email delivery and a record of what was sent
 
 **v2: feedback**
 

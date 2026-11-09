@@ -13,3 +13,6 @@ dbt_project/logs/
 
 # personal CV details; the repo is public
 profile/
+
+# database dump for moving to the cloud VM (deploy/oracle)
+jobs_raw.dump

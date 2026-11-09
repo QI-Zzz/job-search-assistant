@@ -43,9 +43,17 @@ SKIP_SEEN_DAYS = 3
 # like "analytics" and "consultant" (about 500 results each)
 RUN_TIMEOUT_SECS = 900
 
+# Pass 1 only extracts jobs first fetched in the last N days, so a prompt change re-extracts
+# recent jobs only; older jobs keep their last extraction
+EXTRACT_RECENT_DAYS = 2
+
 # Pass 2 only scores jobs first fetched in the last N days, so a prompt change does not rescore
 # every job ever found; keep in step with vars.ranking.recent_days in dbt_project.yml
 SCORE_RECENT_DAYS = 2
 
 # Pass 2 (Sonnet scoring) runs after eligibility; switched on 2026-10-31 after the review of steps 1-4
 RUN_PASS_2 = True
+
+# Daily email: a job already sent under another job id (same company and title) within this
+# many days counts as a repost and is left out
+REPOST_WINDOW_DAYS = 30

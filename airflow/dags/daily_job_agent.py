@@ -4,6 +4,7 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
 from job_agent.config import RUN_PASS_2
+from job_agent.daily_email import main as send_daily_email
 from job_agent.fetch import main as fetch_jobs
 
 DBT = "cd /opt/airflow/dbt_project && /home/airflow/dbt_venv/bin/dbt"
@@ -49,4 +50,6 @@ with DAG(
             bash_command=f"{DBT} run --select job_ranking keyword_stats",
         )
 
-        dbt_eligibility >> score >> dbt_ranking
+        email = PythonOperator(task_id="send_email", python_callable=send_daily_email)
+
+        dbt_eligibility >> score >> dbt_ranking >> email

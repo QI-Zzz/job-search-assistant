@@ -28,6 +28,8 @@ facts AS (
         (e.extraction ->> 'years_required_min')::INT AS years_required_min,
         e.extraction ->> 'dutch_requirement' AS dutch_requirement,
         (e.extraction ->> 'leads_team')::BOOLEAN AS leads_team,
+        -- 'offered', 'not_offered' or 'not_mentioned'; NULL for extractions before prompt v5
+        e.extraction ->> 'visa_sponsorship' AS visa_sponsorship,
         ARRAY(SELECT JSONB_ARRAY_ELEMENTS_TEXT(e.extraction -> 'tech_stack')) AS tech_stack,
         e.extraction ->> 'role_family' AS role_family,
         e.extraction ->> 'role_family_reason' AS role_family_reason,
@@ -48,6 +50,8 @@ SELECT
         WHEN f.dutch_requirement = 'required' THEN 'Dutch required'
         WHEN f.years_required_min > {{ rules.max_years_required }} THEN 'more than {{ rules.max_years_required }} years required'
         WHEN f.leads_team THEN 'leads a team'
+        -- Amy needs visa sponsorship; most postings say nothing, so only an explicit "no" is dropped
+        WHEN f.visa_sponsorship = 'not_offered' THEN 'no visa sponsorship'
         -- extractions from before prompt v2 have no role family
         WHEN f.role_family IS NULL THEN 'no role family yet'
         WHEN f.role_family NOT IN ({{ "'" ~ rules.keep_role_families | join("', '") ~ "'" }}) THEN 'role family: ' || f.role_family

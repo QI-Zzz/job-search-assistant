@@ -1,5 +1,5 @@
 -- One row per scored eligible job first fetched in the last few days, in the order the email lists them. Every scored job is sent
--- (since 2026-10-31: few jobs reach pass 2, so there is no cut). Weights live in dbt_project.yml (vars.ranking).
+-- (since 2026-10-31: few jobs reach pass 2, so there is no cut). Settings live in dbt_project.yml (vars.ranking).
 
 {% set r = var('ranking') %}
 
@@ -21,21 +21,18 @@ latest_scores AS (
     ORDER BY job_id, score_type, scored_at DESC
 ),
 
-career AS (
+insight AS (
+    -- role insight (since 2026-11-05, replacing career value): a description of the job, no score
     SELECT
         job_id,
-        (result ->> 'tier')::INT AS tier,
-        ROUND((
-            {{ r.career_weights.salary_ceiling }} * (result -> 'salary_ceiling' ->> 'score')::NUMERIC
-            + {{ r.career_weights.geographic_mobility }} * (result -> 'geographic_mobility' ->> 'score')::NUMERIC
-            + {{ r.career_weights.skill_transferability }} * (result -> 'skill_transferability' ->> 'score')::NUMERIC
-            + {{ r.career_weights.low_lock_in_risk }} * (result -> 'low_lock_in_risk' ->> 'score')::NUMERIC
-        ), 1) AS career_value_score,
-        (result -> 'technical_advantage' ->> 'score')::INT AS technical_advantage,
-        result ->> 'summary' AS career_summary,
-        result AS career_detail
+        result ->> 'company_summary' AS company_summary,
+        result ->> 'main_mode' AS main_mode,
+        result ->> 'day_to_day' AS day_to_day,
+        result ->> 'what_it_builds' AS what_it_builds,
+        ARRAY(SELECT JSONB_ARRAY_ELEMENTS_TEXT(result -> 'watch_outs')) AS watch_outs,
+        result AS insight_detail
     FROM latest_scores
-    WHERE score_type = 'career_value'
+    WHERE score_type = 'role_insight'
 ),
 
 fit AS (
@@ -61,22 +58,23 @@ scored AS (
         e.job_url,
         e.years_required_min,
         e.dutch_requirement,
+        e.visa_sponsorship,
         e.tech_stack,
-        c.tier,
-        c.career_value_score,
-        c.technical_advantage,
-        c.career_summary,
+        i.company_summary,
+        i.main_mode,
+        i.day_to_day,
+        i.what_it_builds,
+        i.watch_outs,
         f.fit_score,
         f.fit_reason,
         f.match_reasons,
         f.gaps,
         f.profile_version,
-        ROUND((c.career_value_score + f.fit_score) / 2, 1) AS overall_score,
-        c.career_detail,
+        i.insight_detail,
         f.fit_detail
     FROM {{ ref('jobs_eligibility') }} AS e
     JOIN first_fetched AS j USING (job_id)
-    JOIN career AS c USING (job_id)
+    JOIN insight AS i USING (job_id)
     LEFT JOIN fit AS f USING (job_id)
     WHERE e.drop_reason IS NULL
       AND j.first_fetched_at >= NOW() - INTERVAL '{{ r.recent_days }} days'
@@ -85,11 +83,9 @@ scored AS (
 ranked AS (
     SELECT
         *,
-        -- technical advantage only breaks ties
         ROW_NUMBER() OVER (
-            -- fit first (can I get it?), then career value; technical advantage only breaks ties.
-            -- Sorting by overall_score put senior roles with high career value but fit 3 near the top
-            ORDER BY fit_score DESC NULLS LAST, career_value_score DESC, technical_advantage DESC
+            -- by fit (can I get it?); newest job first on a tie. Career value was dropped on 2026-11-05
+            ORDER BY fit_score DESC NULLS LAST, job_id DESC
         ) AS rank
     FROM scored
 )

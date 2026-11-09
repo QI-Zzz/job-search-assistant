@@ -43,3 +43,14 @@ CREATE TABLE IF NOT EXISTS raw.job_scores (
     scored_at TIMESTAMP WITH TIME ZONE NOT NULL,
     PRIMARY KEY (job_id, score_type, prompt_version, profile_version)
 );
+
+-- daily email: one row per job sent, so a job is never sent twice; title and company are kept
+-- to spot reposts (same job posted again under a new LinkedIn job id)
+CREATE TABLE IF NOT EXISTS raw.sent_jobs (
+    job_id TEXT PRIMARY KEY,
+    title TEXT,
+    company_name TEXT,
+    email_date DATE NOT NULL,
+    position INTEGER,                 -- position in that day's email
+    sent_at TIMESTAMP WITH TIME ZONE NOT NULL
+);

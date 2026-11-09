@@ -39,6 +39,7 @@ SELECT
         WHEN title_lower ~ '{{ rules.junior_track_title }}' THEN 'intern or trainee title'
         WHEN title_lower ~ '{{ rules.academic_title }}' THEN 'academic title'
         WHEN title_lower ~ '{{ rules.freelance_title }}' THEN 'freelance title'
+        WHEN title_lower ~ '{{ rules.data_science_title }}' THEN 'data science title'
         WHEN LOWER(description) ~ '{{ rules.freelance_description }}' THEN 'freelance in description'
         WHEN title_lower ~ '{{ rules.other_language_title }}' THEN 'title asks for another language'
         WHEN LOWER(location) !~ '{{ rules.allowed_location }}' THEN 'outside Amsterdam / Utrecht'

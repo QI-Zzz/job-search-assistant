@@ -1,7 +1,8 @@
-"""Pass 2: score eligible jobs for career value and fit.
+"""Pass 2: role insight and fit for each eligible job.
 
-Career value runs first and never sees the CV. Fit compares the job with the candidate
-profile. Every eligible job gets both scores; weighted scores and ordering are done in dbt.
+Role insight (no score) describes what the job would really be like, written with Amy's job matching
+framework (profile/job_matching_framework.md) in mind; it does not use the CV. Fit compares the job
+with the candidate profile and gives a 1-10 score. Ordering is done in dbt.
 Runs in the LLM virtualenv, from airflow/dags:
     /home/airflow/llm_venv/bin/python -m job_agent.score [--limit N]
 """
@@ -21,47 +22,42 @@ from job_agent.llm import call_structured, format_posting, get_client, report, r
 MODEL = "claude-sonnet-5-5"
 EFFORT = "low"
 # bump when a prompt or schema changes; jobs are rescored per version
-CAREER_PROMPT_VERSION = "v1"
+# Role insight replaced career value on 2026-11-05: no scores, a fuller picture of the job written
+# with Amy's job matching framework (profile/job_matching_framework.md) in mind.
+# Career value (prompts v1-v3) rows stay in raw.job_scores under score_type 'career_value'.
+INSIGHT_PROMPT_VERSION = "v1"
 FIT_PROMPT_VERSION = "v3"  # v2: one overall score instead of four weighted dimensions; v3: written to her as "you"
 PROFILE_PATH = os.getenv("PROFILE_PATH", "/opt/airflow/profile/candidate_profile.md")
+# Amy's job matching framework, used by role insight; editing it redoes the insight for recent jobs
+FRAMEWORK_PATH = os.getenv("FRAMEWORK_PATH", "/opt/airflow/profile/job_matching_framework.md")
 
-CAREER_PROMPT = """You judge how good a job is for the long-term career of an early-career professional \
-(second year of her career, based in Amsterdam). Judge the job itself, not whether this person would get it.
+INSIGHT_PROMPT = """You help the person described in the job matching framework below understand what \
+a job would really be like, beyond the wording of the posting. Do not score the job, and do not judge \
+whether she would get it; that is done separately.
 
-Base every judgement on the actual responsibilities and likely career outcomes, never on the title alone. \
-Score each dimension 1-10 and give a one-sentence reason before the score.
+She reads your answer in her daily job email, so write to her as "you" and "your", never "she", "her" \
+or "the user". Be concrete and candid; do not repeat the posting's selling points or requirements. \
+Separate what the posting says from what you infer ("probably", "likely"), and say when the posting is \
+too vague to tell. Use the framework's sections 1, 3 and 9 for what matters to her; ignore its scoring, \
+tiers and report format.
 
-1. salary_ceiling (30%): long-term earning potential, salary progression, access to high-paying \
-employers and markets, paths into leadership or other lucrative tracks.
-   2 = low-paid track with a low ceiling; 5 = average market pay and progression; \
-9 = leads into top-paying roles, employers or markets.
-2. geographic_mobility (25%): international demand, cross-border skill recognition, remote work, \
-feasibility of working in the Netherlands, UAE, Singapore or the US.
-   2 = only usable in one country; 5 = transferable to some markets with effort; \
-9 = in demand in all four markets.
-3. skill_transferability (25%): whether the skills and experience built in this role transfer \
-across industries, companies and functions, including pivots into other careers.
-   2 = narrow skills useful only in this niche; 5 = partly transferable; \
-9 = broadly valued skills that open many doors.
-4. low_lock_in_risk (20%): dependence on local regulations, niche industry knowledge, proprietary \
-systems, country-specific qualifications or a narrow track. Higher score = LOWER risk.
-   2 = heavily tied to a proprietary system, local rules or a niche; 5 = some lock-in; \
-9 = no meaningful lock-in.
+- company_summary: one or two sentences on what the company does (product or service, customers, size \
+or stage if stated). If the posting does not say, write "The posting does not describe the company."
+- main_mode: what the job is mostly: building, advising, coordinating, operating, maintaining or selling.
+- day_to_day: three to five sentences on what you would actually spend your week on, what you would own \
+(decisions, projects, systems, outcomes) versus support, who you would work with, and how the time \
+splits between building or improving things and routine operations, reporting and maintenance.
+- what_it_builds: two or three sentences on the skills and experience the job would give you, how \
+portable they are across employers and countries, and the realistic next roles after three to five years. \
+Do not overstate what it can lead to.
+- watch_outs: up to three short, specific red flags for you, judged against the framework's dislikes and \
+constraints (for example mostly routine reporting or maintenance, vague ownership, a narrow or \
+proprietary system, hidden sales targets, a local language in practice, a much more senior or junior \
+level than the title suggests). Empty list if there are none worth mentioning.
 
-technical_advantage (bonus, not part of the weighted score): how much technical depth, AI exposure, \
-coding or data skills in this role create additional career options. A role is not better just \
-because it involves more coding, and a technical role with poor salary, mobility or lock-in is not good.
-   2 = no technical growth; 5 = some; 9 = strong technical growth that widens options.
+The job matching framework:
 
-Non-technical roles (strategy, commercial, operations, product, consulting, management) can score highly.
-
-tier:
-   1 = Excellent: strong earning potential, international mobility, transferable skills, low lock-in.
-   2 = Good: attractive overall, with one meaningful compromise.
-   3 = Conditional: limited upside in one or more important dimensions; only worth it if the trade-offs are justified.
-   4 = Poor: several serious constraints on earning potential, mobility or career freedom.
-
-summary: one sentence on the main reason for the tier."""
+{framework}"""
 
 FIT_PROMPT = """You judge how well a job matches a candidate's background: could she realistically \
 get this job? Do not judge whether the job is good for her career; that is scored separately.
@@ -86,19 +82,12 @@ The candidate's profile:
 {profile}"""
 
 
-class Dimension(BaseModel):
-    reason: str
-    score: int = Field(ge=1, le=10)
-
-
-class CareerValue(BaseModel):
-    salary_ceiling: Dimension
-    geographic_mobility: Dimension
-    skill_transferability: Dimension
-    low_lock_in_risk: Dimension
-    technical_advantage: Dimension
-    tier: Literal[1, 2, 3, 4]
-    summary: str
+class RoleInsight(BaseModel):
+    company_summary: str
+    main_mode: Literal["building", "advising", "coordinating", "operating", "maintaining", "selling"]
+    day_to_day: str
+    what_it_builds: str
+    watch_outs: list[str] = Field(max_length=3)
 
 
 class Fit(BaseModel):
@@ -108,8 +97,9 @@ class Fit(BaseModel):
     gaps: list[str]
 
 
-def load_profile():
-    with open(PROFILE_PATH, encoding="utf-8") as f:
+def load_text(path):
+    """File text plus a short hash, stored as profile_version so an edit rescores recent jobs."""
+    with open(path, encoding="utf-8") as f:
         text = f.read()
     return text, hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
 
@@ -182,13 +172,15 @@ def save(conn, score_type, prompt_version, profile_version, rows):
 
 def main(limit=None):
     client = get_client()
-    profile, profile_version = load_profile()
+    profile, profile_version = load_text(PROFILE_PATH)
+    framework, framework_version = load_text(FRAMEWORK_PATH)
     conn = get_connection()
     try:
-        jobs = jobs_to_score(conn, "career_value", CAREER_PROMPT_VERSION, "-", limit)
-        rows = run_parallel(lambda job: score_one(client, CAREER_PROMPT, CareerValue, job), jobs)
-        save(conn, "career_value", CAREER_PROMPT_VERSION, "-", rows)
-        report("career value", rows)
+        insight_prompt = INSIGHT_PROMPT.format(framework=framework)
+        jobs = jobs_to_score(conn, "role_insight", INSIGHT_PROMPT_VERSION, framework_version, limit)
+        rows = run_parallel(lambda job: score_one(client, insight_prompt, RoleInsight, job), jobs)
+        save(conn, "role_insight", INSIGHT_PROMPT_VERSION, framework_version, rows)
+        report(f"role insight (framework {framework_version})", rows)
 
         fit_prompt = FIT_PROMPT.format(profile=profile)
         jobs = jobs_to_score(conn, "fit", FIT_PROMPT_VERSION, profile_version, limit)

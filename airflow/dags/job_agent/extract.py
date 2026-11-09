@@ -11,12 +11,13 @@ from typing import Literal, Optional
 from psycopg2.extras import Json
 from pydantic import BaseModel, Field
 
+from job_agent import config
 from job_agent.db import get_connection
 from job_agent.llm import call_structured, format_posting, get_client, report, run_parallel
 
 MODEL = "claude-haiku-5-5"
 # bump when the prompt or the schema changes; jobs are re-extracted per version
-PROMPT_VERSION = "v4"  # v2: adds role_family; v3: sharper family boundaries; v4: marketing, GTM, title fallback
+PROMPT_VERSION = "v6"  # v2: adds role_family; v3: sharper family boundaries; v4: marketing, GTM, title fallback; v5: visa_sponsorship; v6: data_science split from data_ml_ai_engineering
 
 SYSTEM_PROMPT = """You extract facts from a job posting. Only report what the posting states; do not guess.
 
@@ -29,6 +30,13 @@ overall role. null if no number of years is stated.
 "not_mentioned" otherwise.
 - leads_team: true only if the role manages people or leads a team (direct reports, team lead, \
 people management). Mentoring juniors or leading a project does not count.
+- visa_sponsorship: what the posting says about sponsoring a work visa for someone from outside the EU. \
+"offered" if it says it sponsors visas or work permits, supports the highly skilled migrant \
+(kennismigrant) route, or is a recognised sponsor (erkend referent). "not_offered" if it says it does \
+not sponsor, or that candidates must already have the right to work in the Netherlands or the EU \
+(e.g. "no visa sponsorship", "EU work permit required", "must be eligible to work in the Netherlands \
+without sponsorship", "valid work permit required"). "not_mentioned" otherwise; a relocation package \
+alone, without visa support, is "not_mentioned".
 - tech_stack: tools, languages and platforms named in the posting (e.g. SQL, Python, dbt, Snowflake, \
 Power BI, AWS), short names, no duplicates. Empty list if none.
 - role_family: the kind of work the role mainly does day to day, judged from the responsibilities, \
@@ -44,11 +52,16 @@ planning, budgeting, FP&A (finance_controlling); market, consumer or competitor 
 media management, even when it includes performance reporting (other); administering a platform or \
 system with some reporting on the side (operations_supply_chain).
   - data_ml_ai_engineering: building data pipelines, warehouses and data platforms, analytics \
-engineering, data science, machine learning, and AI / LLM engineering where the core work is data \
-or models. Also building data, CRM and automation systems for business teams (GTM engineering, \
-revenue operations engineering). NOT: DevOps, SRE or cloud infrastructure work (it_infrastructure_security); full-stack, backend or product software that calls an AI API \
+engineering, ML and AI platforms, MLOps, and AI / LLM engineering where the core work is data \
+or models in production. Also building data, CRM and automation systems for business teams (GTM engineering, \
+revenue operations engineering). NOT: data science (data_science); DevOps, SRE or cloud infrastructure work (it_infrastructure_security); full-stack, backend or product software that calls an AI API \
 (software_engineering); embedded or control software (software_engineering); security engineering \
 (it_infrastructure_security).
+  - data_science: the main work is data science: statistical modelling, predictive or \
+forecasting models, machine learning model development and experimentation, causal inference, \
+quantitative research. Titles like data scientist, applied scientist, ML scientist or research \
+scientist. NOT: dashboards and reporting (data_analytics); pipelines, platforms or putting models \
+into production (data_ml_ai_engineering).
   - software_engineering: building software products: backend, frontend, full stack, mobile, \
 embedded.
   - business_analysis_consulting: business or systems analysis, requirements, process analysis and \
@@ -72,12 +85,13 @@ DevOps, SRE, cloud infrastructure, cybersecurity, field service and hardware ins
 recruiting, legal, clinical, manufacturing, mechanical, electrical or hardware engineering, \
 hardware or device application engineering, retail, AI-training gig work, ...).
 - role_family_reason: one short sentence on why.
-- evidence: short quotes from the posting supporting years_required_min, dutch_requirement and \
-leads_team. Empty string when there is nothing to quote."""
+- evidence: short quotes from the posting supporting years_required_min, dutch_requirement, \
+leads_team and visa_sponsorship. Empty string when there is nothing to quote."""
 
 RoleFamily = Literal[
     "data_analytics",
     "data_ml_ai_engineering",
+    "data_science",
     "software_engineering",
     "business_analysis_consulting",
     "presales_solutions",
@@ -93,6 +107,7 @@ class Evidence(BaseModel):
     years: str
     dutch: str
     leads_team: str
+    visa: str
 
 
 class JobFacts(BaseModel):
@@ -100,6 +115,7 @@ class JobFacts(BaseModel):
     years_required_min: Optional[int] = Field(description="null if no number of years is stated")
     dutch_requirement: Literal["required", "nice_to_have", "not_mentioned"]
     leads_team: bool
+    visa_sponsorship: Literal["offered", "not_offered", "not_mentioned"]
     tech_stack: list[str]
     role_family: RoleFamily
     role_family_reason: str
@@ -107,7 +123,7 @@ class JobFacts(BaseModel):
 
 
 def jobs_to_extract(conn, limit=None):
-    """Jobs that passed the free rules and have no successful extraction for this prompt version."""
+    """Recent jobs that passed the free rules and have no successful extraction for this prompt version."""
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -115,6 +131,7 @@ def jobs_to_extract(conn, limit=None):
             FROM staging.jobs_prefiltered AS p
             JOIN staging.stg_jobs AS j USING (job_id)
             WHERE p.drop_reason IS NULL
+              AND j.first_fetched_at >= NOW() - MAKE_INTERVAL(days => %s)
               AND NOT EXISTS (
                   SELECT 1 FROM raw.job_extractions AS e
                   WHERE e.job_id = j.job_id AND e.prompt_version = %s AND e.status = 'ok'
@@ -122,7 +139,7 @@ def jobs_to_extract(conn, limit=None):
             ORDER BY j.first_fetched_at DESC
             LIMIT %s
             """,
-            (PROMPT_VERSION, limit),
+            (config.EXTRACT_RECENT_DAYS, PROMPT_VERSION, limit),
         )
         return cur.fetchall()
 
