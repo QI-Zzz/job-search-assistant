@@ -29,7 +29,7 @@ x-airflow-common: &airflow-common
         EMAIL_TO: ${EMAIL_TO:-}
 
 # Ports are bound to 127.0.0.1 so they are only reachable from the machine itself; on the
-# cloud VM, open the Airflow UI through an SSH tunnel (deploy/oracle/README.md)
+# cloud VM, open the Airflow UI through an SSH tunnel (deploy/hetzner/README.md)
 services:
     postgres:
         image: postgres:15

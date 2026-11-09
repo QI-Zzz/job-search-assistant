@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run on the VM, from the repo root, after copying jobs_raw.dump there:
-#     bash deploy/oracle/import_data.sh
+#     bash deploy/hetzner/import_data.sh
 # Replaces the (empty) raw tables with the Mac's data, then rebuilds staging and mart with dbt.
 # Run it before the first pipeline run on the VM.
 set -euo pipefail
