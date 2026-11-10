@@ -38,7 +38,8 @@ vars:
     allowed_location: '(amsterdam|amstelveen|hoofddorp|schiphol|utrecht|randstad|^netherlands$|remote)'
   # Rules applied to pass 1 facts (see jobs_eligibility).
   eligibility:
-    max_years_required: 5
+    # 4 since 2026-11-10: Amy does not want jobs asking 5 or more years ("5+", "5-10", "at least 5")
+    max_years_required: 4
     # pass 1 role families that go on to scoring; every other family is dropped
     # software_engineering dropped 2026-10-30: Amy's CV and experience don't fit software roles
     # presales_solutions dropped 2026-10-30: Amy's review found few presales jobs she would apply to

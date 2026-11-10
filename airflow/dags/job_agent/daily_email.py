@@ -36,27 +36,45 @@ def jobs_to_send(conn):
         return [dict(zip(columns, row)) for row in cur.fetchall()]
 
 
+# title words that say where or for whom, not what the job is ("- Netherlands", "(m/f/d)")
+TITLE_NOISE = {"m", "f", "d", "w", "x", "v", "all", "genders", "netherlands", "nl", "amsterdam", "utrecht",
+               "emea", "europe", "benelux", "remote", "hybrid"}
+
+
 def repost_key(company, title):
-    """Company plus title without punctuation or bracketed bits like "(m/f/d)"."""
+    """Company without punctuation, and the set of title words without bracketed bits and noise."""
     title = re.sub(r"\(.*?\)", " ", title or "")
-    return (re.sub(r"\W+", " ", (company or "").lower()).strip(),
-            re.sub(r"\W+", " ", title.lower()).strip())
+    words = frozenset(re.split(r"\W+", title.lower())) - TITLE_NOISE - {""}
+    return re.sub(r"\W+", " ", (company or "").lower()).strip(), words
+
+
+def same_job(words, other):
+    """Same company assumed. The same job when one title holds all the words of the other plus at
+    most two more, e.g. "Analytics Engineer – Client Reporting" and "Client Reporting Analytics
+    Engineer (dbt/Looker)". More extra words usually mean another job ("Data Analyst" vs "Data
+    Insights Analyst: Self-Serve Dashboards & Impact"); a one-word title only matches exactly."""
+    short, long = sorted((words, other), key=len)
+    return short == long or (len(short) >= 2 and short <= long and len(long - short) <= 2)
 
 
 def drop_reposts(conn, jobs):
     """Leave out jobs already sent under another job id in the last REPOST_WINDOW_DAYS days,
-    and repeats of the same job within today's list."""
+    and repeats of the same job within today's list (the best-ranked one is kept)."""
     since = datetime.now(timezone.utc) - timedelta(days=config.REPOST_WINDOW_DAYS)
     with conn.cursor() as cur:
         cur.execute("SELECT company_name, title FROM raw.sent_jobs WHERE sent_at >= %s", (since,))
-        seen = {repost_key(company, title) for company, title in cur.fetchall()}
+        rows = cur.fetchall()
+    seen = {}  # company -> title word sets already sent or kept today
+    for company, title in rows:
+        company_key, words = repost_key(company, title)
+        seen.setdefault(company_key, []).append(words)
     kept = []
     for job in jobs:
-        key = repost_key(job["company_name"], job["title"])
-        if key in seen:
+        company_key, words = repost_key(job["company_name"], job["title"])
+        if any(same_job(words, other) for other in seen.get(company_key, [])):
             print(f"skipping repost: {job['title']} at {job['company_name']}")
             continue
-        seen.add(key)
+        seen.setdefault(company_key, []).append(words)
         kept.append(job)
     return kept
 

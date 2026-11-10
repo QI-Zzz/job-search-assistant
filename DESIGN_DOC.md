@@ -130,7 +130,7 @@ Rules on the pass 1 facts; thresholds under `vars.eligibility` in `dbt_project.y
 - it was not extracted yet;
 - the posting is not in English (this also catches German postings);
 - Dutch is required ("nice to have" is kept);
-- more than 5 years are required (5 is kept);
+- 5 or more years are required (4 is kept; until 2026-11-10 the limit was more than 5);
 - the role leads a team;
 - the posting says it does not sponsor a visa, or that candidates must already have the right to work in the Netherlands or the EU (`'no visa sponsorship'`). Postings that say nothing are kept, because most don't mention visas;
 - its role family is not on the keep list (`'role family: …'`); extractions from before v2 have none (`'no role family yet'`).
@@ -232,7 +232,7 @@ Convention: **Python tasks write to `raw`; dbt owns `staging` and `mart`.** Ever
 | `jobs_eligibility` | staging | dbt | job that passed the free rules, with pass 1 facts and a drop reason |
 | `job_ranking` | mart | dbt | scored job, with weighted scores, rank and `selected` |
 | `keyword_stats` | mart | dbt | fetch day × keyword |
-| `sent_jobs` | raw | Python | job sent (once), with title and company for repost checks |
+| `sent_jobs` | raw | Python | job sent (once), with title and company for repost checks (same company, and one title holds all the words of the other plus at most two more) |
 | `feedback` (v2) | raw | FastAPI | reaction submitted |
 | `volume_test` (temporary) | sandbox | by hand | job from the no-keyword test; drop when done |
 
@@ -269,6 +269,7 @@ Apify is the largest cost during the keyword test; it drops once the keyword lis
 | 2026-10-29 | Drop Part-time, Internship and Volunteer contracts; keep Contract; keep "Randstad" locations | Amy's choice |
 | 2026-10-29 | Location narrowed to Amsterdam, Amstelveen, Hoofddorp, Schiphol, Utrecht and the Randstad (Haarlem, Diemen, Zaandam, Almere and Hilversum removed) | Amy's edit; replaces the earlier choice to keep Haarlem, Diemen and Almere |
 | 2026-10-29 | Schedule Tuesday to Saturday 07:30, first run Friday 2026-10-30; pass 2 off during refinement | Weekend postings are rarely worth checking; refine steps 1–4 first |
+| 2026-11-10 | Drop jobs asking 5 or more years (`max_years_required` 5 → 4); repost check matches titles by words, not exact text: same company and one title holds all the other's words plus at most two more ("Analytics Engineer – Client Reporting" = "Client Reporting Analytics Engineer (dbt/Looker)"), location and gender tags ignored | Amy's review after the first Hetzner run. 28 of the 171 jobs sent so far asked for 5 years, mostly "5+" or "5-10". Exact matching missed Studytube's job sent three times (twice in one email), BYD "Pricing Analyst" / "Pricing Analyst-NL" and McKinsey "Consultant" / "Experienced Consultant". Same title at different companies is still sent (often agencies with different clients) |
 | 2026-11-08 | Keep dropping manager, lead and supervisor titles | Tried letting them through to pass 1 on 2026-11-07 (after an adidas "Manager" job asking for 2 years was dropped): 25 more jobs in 2 days, mostly not Amy's target roles. Reverted on her review; an occasional miss like adidas is accepted |
 | 2026-11-05 | Drop career value; role insight instead (day to day, what it builds, watch-outs, judged against the framework; no score); order by fit only | Amy's choice after seeing v3: she wants to understand what a job really involves rather than another score. About $0.013 per job (career value v2 $0.010, v3 $0.017) |
 | 2026-11-05 | Career value prompt v3 uses Amy's job matching framework (eight criteria, total out of 100, verdict, side checks) from `profile/job_matching_framework.md`; fit unchanged; filters unchanged | Amy wrote the framework to judge jobs by long-term career outcomes; it replaces the four-dimension rubric. Kept as a file so she can edit it without code changes |
